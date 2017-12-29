@@ -272,14 +272,14 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
     }
 
     private fun closeFabMenu() {
-        fab.setImageResource(R.drawable.ic_add_black_48px)
+        fab.setImageResource(R.drawable.ic_add_black_48dp)
         fab_photo.visibility = View.GONE
         fab_camera.visibility = View.GONE
         fab.tag = false
     }
 
     private fun openFabMenu() {
-        fab.setImageResource(R.drawable.ic_cancel_black_48px)
+        fab.setImageResource(R.drawable.ic_cancel_black_48dp)
         fab_photo.visibility = View.VISIBLE
         fab_camera.visibility = View.VISIBLE
         fab.tag = true
