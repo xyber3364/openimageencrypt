@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.ThumbnailUtils
+import android.net.Uri
 import android.os.AsyncTask
 import android.os.Bundle
 import android.provider.MediaStore
@@ -29,8 +30,9 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
     var imageCipher: ImageCipher? = null
     val adapter = ImageGridAdapter(this)
 
-    var currentTempFile: File? = null;
+    var currentTempFile: File? = null
     var lastSafeAction = false
+    var shareImageUri: Uri? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +49,15 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
         FileHelper.createRequiredDirectories(this)
         gv_Images.adapter = adapter
         gv_Images.onItemLongClickListener = this
+
+        val intent = intent
+        val action = intent.action
+        val type = intent.type
+        if (Intent.ACTION_SEND.equals(action) && type != null) {
+            shareImageUri = intent.getParcelableExtra(Intent.EXTRA_STREAM) as Uri
+
+
+        }
     }
 
     /**
@@ -194,6 +205,24 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
         imageCipher = ImageCipher(hashcode.toCharArray(), currentIv, currentSalt)
         adapter.cipher = imageCipher
         adapter.load()
+
+        if (shareImageUri != null) {
+            object : AsyncTask<Uri, Void, Bitmap>() {
+                override fun doInBackground(vararg params: Uri?): Bitmap {
+                    return BitmapFactory.decodeStream(contentResolver.openInputStream(params[0]))
+                }
+
+                override fun onPostExecute(result: Bitmap?) {
+                    if (result != null) {
+                        addBitmapToVault(result)
+                    }
+                }
+
+            }.execute(shareImageUri)
+
+
+            shareImageUri = null
+        }
 
         if (currentIv == null) {
             val newIv = imageCipher?.iv
