@@ -32,7 +32,4 @@
         </provider>
 
     </application>
-    <uses-feature android:name="android.hardware.camera" />
-
-
 </manifest>
