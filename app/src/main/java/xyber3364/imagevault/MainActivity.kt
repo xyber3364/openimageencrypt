@@ -4,9 +4,12 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.AsyncTask
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.support.design.widget.FloatingActionButton
@@ -32,7 +35,7 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
 
     var currentTempFile: File? = null
     var lastSafeAction = false
-    var shareImageUri: Uri? = null
+    var shareImageUri: List<Uri> = listOf()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,9 +57,9 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
         val action = intent.action
         val type = intent.type
         if (Intent.ACTION_SEND.equals(action) && type != null) {
-            shareImageUri = intent.getParcelableExtra(Intent.EXTRA_STREAM) as Uri
-
-
+            shareImageUri = listOf(intent.getParcelableExtra(Intent.EXTRA_STREAM) as Uri)
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action) && type != null) {
+            shareImageUri = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
         }
     }
 
@@ -157,12 +160,15 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
             if (data != null && data.getData() != null) {
                 val uri = data.data
                 val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, uri)
-                addBitmapToVault(bitmap)
+                val rotatedBitmap = processRotation(bitmap, uri)
+                addBitmapToVault(rotatedBitmap)
             }
         } else if (requestCode == CAMERA && resultCode == Activity.RESULT_OK) {
             if (currentTempFile != null) {
                 val bitmap = BitmapFactory.decodeFile(currentTempFile?.absolutePath)
-                addBitmapToVault(bitmap)
+                val currentUri = FileProvider.getUriForFile(this, "xyber3364.imagevault", currentTempFile)
+                val rotatedBitmap = processRotation(bitmap, currentUri)
+                addBitmapToVault(rotatedBitmap)
             }
         }
 
@@ -170,26 +176,61 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
         lastSafeAction = false
     }
 
-    private fun addBitmapToVault(bitmap: Bitmap) {
+    fun processRotation(bitmap: Bitmap, selectedImage: Uri): Bitmap {
+        val input = contentResolver.openInputStream(selectedImage)
+        val ei: ExifInterface
+
+        if (Build.VERSION.SDK_INT > 23) {
+            ei = ExifInterface(input);
+        } else {
+            ei = ExifInterface(selectedImage.getPath());
+        }
+
+        val orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        if (ExifInterface.ORIENTATION_ROTATE_90 == orientation) {
+            return rotateImage(bitmap, 90)
+        } else if (ExifInterface.ORIENTATION_ROTATE_180 == orientation) {
+            return rotateImage(bitmap, 180)
+        } else if (ExifInterface.ORIENTATION_ROTATE_270 == orientation) {
+            return rotateImage(bitmap, 270)
+        } else {
+            return bitmap
+        }
+    }
+
+    private fun rotateImage(img: Bitmap, degree: Int): Bitmap {
+        val matrix = Matrix()
+        matrix.postRotate(degree.toFloat())
+        val rotatedImg = Bitmap.createBitmap(img, 0, 0, img.width, img.height, matrix, true)
+        img.recycle()
+        return rotatedImg
+    }
+
+
+    private fun addBitmapToVault(bitmapList: List<Bitmap>) {
         val context = this
         pb_Main.visibility = View.VISIBLE
-        object : AsyncTask<Void, Void, File>() {
-            override fun doInBackground(vararg params: Void?): File {
-                val name = "aaa_" + System.currentTimeMillis() + ".encrypted"
-                val thumbBitmap = ThumbnailUtils.extractThumbnail(bitmap, 512, 512)
-                val thumFile = FileHelper.getThumbnailFile(context, name)
-                saveBitmpaEncrypted(thumFile, thumbBitmap)
-                thumbBitmap.recycle()
+        object : AsyncTask<Void, Void, List<File>>() {
+            override fun doInBackground(vararg params: Void?): List<File> {
+                return bitmapList.map {
+                    val name = "aaa_" + System.currentTimeMillis() + ".encrypted"
+                    val thumbBitmap = ThumbnailUtils.extractThumbnail(it, 512, 512)
+                    val thumFile = FileHelper.getThumbnailFile(context, name)
+                    saveBitmpaEncrypted(thumFile, thumbBitmap)
+                    thumbBitmap.recycle()
 
-                saveBitmpaEncrypted(FileHelper.getImagesFile(context, name), bitmap)
-                bitmap.recycle()
+                    saveBitmpaEncrypted(FileHelper.getImagesFile(context, name), it)
+                    it.recycle()
+                    thumFile
 
-                return thumFile
+                }
             }
 
-            override fun onPostExecute(result: File?) {
+            override fun onPostExecute(result: List<File>?) {
                 if (result != null) {
-                    adapter.add(result)
+                    result.forEach {
+                        adapter.add(it)
+                    }
                     adapter.notifyDataSetChanged()
                     pb_Main.visibility = View.GONE
                 }
@@ -197,6 +238,9 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
         }.execute()
     }
 
+    private fun addBitmapToVault(bitmap: Bitmap) {
+        addBitmapToVault(listOf(bitmap))
+    }
 
     private fun handleResultFromPasswordActivity(hashcode: String) {
         val currentIv = StorageHelper.getIv(this)
@@ -205,24 +249,6 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
         imageCipher = ImageCipher(hashcode.toCharArray(), currentIv, currentSalt)
         adapter.cipher = imageCipher
         adapter.load()
-
-        if (shareImageUri != null) {
-            object : AsyncTask<Uri, Void, Bitmap>() {
-                override fun doInBackground(vararg params: Uri?): Bitmap {
-                    return BitmapFactory.decodeStream(contentResolver.openInputStream(params[0]))
-                }
-
-                override fun onPostExecute(result: Bitmap?) {
-                    if (result != null) {
-                        addBitmapToVault(result)
-                    }
-                }
-
-            }.execute(shareImageUri)
-
-
-            shareImageUri = null
-        }
 
         if (currentIv == null) {
             val newIv = imageCipher?.iv
@@ -233,6 +259,27 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, AdapterView.OnIt
                 StorageHelper.saveSalt(newSalt, this)
             }
         }
+
+        if (shareImageUri.size > 0) {
+            object : AsyncTask<List<Uri>, Void, List<Bitmap>>() {
+                override fun doInBackground(vararg params: List<Uri>): List<Bitmap> {
+                    return params[0].map {
+                        BitmapFactory.decodeStream(contentResolver.openInputStream(it))
+                    }
+                }
+
+                override fun onPostExecute(result: List<Bitmap>?) {
+                    if (result != null) {
+                        addBitmapToVault(result)
+                    }
+                }
+
+            }.execute(shareImageUri)
+
+            shareImageUri = listOf()
+        }
+
+
     }
 
     private fun saveBitmpaEncrypted(file: File, bitmap: Bitmap) {
